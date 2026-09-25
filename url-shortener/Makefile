@@ -1,7 +1,9 @@
 .DEFAULT_GOAL := dev
 
 APP_REPLICAS ?= 3
-export APP_REPLICAS
+WORKER_REPLICAS ?= 4
+KAFKA_PARTITIONS ?= 4
+export APP_REPLICAS WORKER_REPLICAS KAFKA_PARTITIONS
 
 URL_COUNT ?= 100
 REQUESTS ?= 10000
@@ -38,3 +40,6 @@ test:
 
 load-test:
 	bun run loadtests/short-url.ts
+
+fmt:
+	@go fmt ./...

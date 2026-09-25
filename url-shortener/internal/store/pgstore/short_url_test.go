@@ -1,4 +1,4 @@
-package dbstore
+package pgstore
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"url-shortener/internal/shortcode/shortcodetest"
 	"url-shortener/internal/store"
 
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
 
@@ -40,18 +41,19 @@ func TestCreateShortURLWithMockGenerator(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	m := metrics.MustNew(prometheus.NewRegistry())
 	mockGenerator := shortcodetest.NewGenerator("abc123")
 	createdCount := func() float64 {
 		t.Helper()
 		var metric dto.Metric
-		if err := metrics.ShortURLsCreated.Write(&metric); err != nil {
+		if err := m.Store.Created.Write(&metric); err != nil {
 			t.Fatal(err)
 		}
 		return metric.GetCounter().GetValue()
 	}
 	before := createdCount()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s := NewShortUrlStore(ShortUrlStoreParams{DB: pool, CodeGenerator: mockGenerator.Generate, Logger: logger})
+	s := NewShortUrlStore(ShortUrlStoreParams{Metrics: m.Store, DB: pool, CodeGenerator: mockGenerator.Generate, Logger: logger})
 	created, err := s.CreateShortURL(ctx, "https://example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +82,7 @@ func TestCreateShortURLWithMockGenerator(t *testing.T) {
 
 	// Each attempt invokes the generator again, allowing the next code to succeed.
 	retryGenerator := shortcodetest.NewGenerator("abc123", "freshCode")
-	retryingStore := NewShortUrlStore(ShortUrlStoreParams{DB: pool, CodeGenerator: retryGenerator.Generate, Logger: logger})
+	retryingStore := NewShortUrlStore(ShortUrlStoreParams{Metrics: m.Store, DB: pool, CodeGenerator: retryGenerator.Generate, Logger: logger})
 	if _, err := retryingStore.CreateShortURL(ctx, "https://example.org"); !errors.Is(err, store.ErrCodeConflict) {
 		t.Fatalf("expected collision on first attempt, got %v", err)
 	}
@@ -95,7 +97,7 @@ func TestCreateShortURLWithMockGenerator(t *testing.T) {
 		t.Fatal(err)
 	}
 	otherGenerator := shortcodetest.NewGenerator("unusedCode")
-	otherConflictStore := NewShortUrlStore(ShortUrlStoreParams{DB: pool, CodeGenerator: otherGenerator.Generate, Logger: logger})
+	otherConflictStore := NewShortUrlStore(ShortUrlStoreParams{Metrics: m.Store, DB: pool, CodeGenerator: otherGenerator.Generate, Logger: logger})
 	if _, err := otherConflictStore.CreateShortURL(ctx, "https://example.com"); err == nil || errors.Is(err, store.ErrCodeConflict) {
 		t.Fatalf("expected an ordinary database error for the URL constraint, got %v", err)
 	}

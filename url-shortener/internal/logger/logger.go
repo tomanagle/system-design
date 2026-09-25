@@ -1,16 +1,11 @@
 package logger
 
 import (
-	"os"
-
 	"log/slog"
+	"os"
 )
 
-type Logger struct {
-	logger *slog.Logger
-}
-
-func NewLogger() *Logger {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	return &Logger{logger: logger}
+// New builds the JSON logger every binary writes to stdout.
+func New(level slog.Level) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 }

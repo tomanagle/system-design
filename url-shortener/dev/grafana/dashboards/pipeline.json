@@ -1,0 +1,702 @@
+{
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "uid": "url-shortener-pipeline",
+  "title": "URL Shortener - Event Pipeline",
+  "description": "Redirect event delivery through the app queue, Kafka, and ClickHouse. Kafka filters apply to broker metrics; app and worker panels cover all replicas.",
+  "tags": [
+    "url-shortener",
+    "analytics",
+    "kafka"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "topic",
+        "label": "Topic",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(kafka_topic_partitions{job=\"kafka-exporter\",topic!~\"__.*\"}, topic)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      },
+      {
+        "name": "group",
+        "label": "Group",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(kafka_consumergroup_members{job=\"kafka-exporter\"}, consumergroup)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Exporter scrape health",
+      "description": "1 means the exporter can be scraped. Broker and offset metrics may still be unavailable if Kafka cannot be reached.",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(up{job=\"kafka-exporter\"})",
+          "legendFormat": "Exporter",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Brokers discovered",
+      "description": "Broker count reported by the exporter; not a broker health check.",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(kafka_brokers{job=\"kafka-exporter\"})",
+          "legendFormat": "Brokers",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Consumer group members",
+      "description": "Members of selected groups. Workers beyond the partition count can be idle.",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kafka_consumergroup_members{job=\"kafka-exporter\",consumergroup=~\"$group\"}",
+          "legendFormat": "{{consumergroup}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Uncommitted partitions",
+      "description": "Partitions whose consumer group has no committed offset yet. They are excluded from the lag chart; missing data is not zero lag.",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kafka_consumergroup_current_offset{job=\"kafka-exporter\",topic=~\"$topic\",consumergroup=~\"$group\"} < bool 0)",
+          "legendFormat": "Partitions",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Consumer lag by partition",
+      "description": "Kafka end offset minus committed offset. Workers commit after ClickHouse storage. Partitions without committed offsets are excluded. Topic and group filters apply to Kafka panels.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kafka_consumergroup_lag{job=\"kafka-exporter\",topic=~\"$topic\",consumergroup=~\"$group\"} and on(topic,consumergroup,partition) (kafka_consumergroup_current_offset{job=\"kafka-exporter\",topic=~\"$topic\",consumergroup=~\"$group\"} >= 0)",
+          "legendFormat": "{{consumergroup}} / {{topic}} / p{{partition}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Producer queue depth and capacity",
+      "description": "Per app in-memory queue, excluding the batch currently being published. All app replicas; topic/group filters do not apply to app or worker metrics.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "stream_producer_queue_depth{job=\"url-shortener\"}",
+          "legendFormat": "{{instance}} queued",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "stream_producer_queue_capacity{job=\"url-shortener\"}",
+          "legendFormat": "{{instance}} capacity",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Event throughput",
+      "description": "All replicas. Published means Kafka acknowledged the batch. Stored counts include replays, so these rates are operational counts rather than a deduplicated audit.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(stream_producer_enqueued_messages_total{job=\"url-shortener\"}[$__rate_interval]))",
+          "legendFormat": "Enqueued",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(stream_producer_published_messages_total{job=\"url-shortener\"}[$__rate_interval]))",
+          "legendFormat": "Published",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(analytics_events_stored_total{job=\"url-shortener-worker\"}[$__rate_interval]))",
+          "legendFormat": "Stored",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Dropped event rate",
+      "description": "Known drops from full queues or shutdown. Process crashes can lose queued events without incrementing this counter. A reason appears after its first drop.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(reason)(rate(stream_producer_dropped_messages_total{job=\"url-shortener\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Kafka publish latency",
+      "description": "Batch write duration including internal Kafka writer retries, excluding queue wait and the pause between application retries. Uses default buckets: percentiles above 10 seconds are capped at 10 seconds.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by(le,outcome)(rate(stream_producer_publish_duration_seconds_bucket{job=\"url-shortener\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by(le,outcome)(rate(stream_producer_publish_duration_seconds_bucket{job=\"url-shortener\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by(le,outcome)(rate(stream_producer_publish_duration_seconds_bucket{job=\"url-shortener\"}[$__rate_interval])))",
+          "legendFormat": "p99 {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Pipeline errors",
+      "description": "Failed attempts across all replicas. Retries can recover publish, store, or commit errors. Invalid events stop the worker without committing.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(stream_producer_publish_errors_total{job=\"url-shortener\"}[$__rate_interval]))",
+          "legendFormat": "Publish",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(analytics_store_errors_total{job=\"url-shortener-worker\"}[$__rate_interval]))",
+          "legendFormat": "Store",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(analytics_commit_errors_total{job=\"url-shortener-worker\"}[$__rate_interval]))",
+          "legendFormat": "Commit",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(analytics_invalid_events_total{job=\"url-shortener-worker\"}[$__rate_interval]))",
+          "legendFormat": "Invalid event",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Event age at successful storage",
+      "description": "Time from event creation to successful ClickHouse insert, including queueing and retries. Observed only when storage succeeds; replays count again. Requires synchronized clocks. Default buckets cap p95 at 10 seconds; the mean is uncapped.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by(le)(rate(analytics_event_age_seconds_bucket{job=\"url-shortener-worker\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(analytics_event_age_seconds_sum{job=\"url-shortener-worker\"}[$__rate_interval])) / sum(rate(analytics_event_age_seconds_count{job=\"url-shortener-worker\"}[$__rate_interval]))",
+          "legendFormat": "Mean",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Stored events older than 10 seconds",
+      "description": "Fraction of successfully stored events whose age exceeded the largest finite default bucket. This does not include events still waiting in Kafka.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - sum(rate(analytics_event_age_seconds_bucket{job=\"url-shortener-worker\",le=~\"10|10[.]0\"}[$__rate_interval])) / sum(rate(analytics_event_age_seconds_count{job=\"url-shortener-worker\"}[$__rate_interval]))",
+          "legendFormat": "Older than 10s",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ],
+  "links": [
+    {
+      "title": "Database Queries",
+      "url": "/d/url-shortener-db",
+      "type": "link",
+      "keepTime": true
+    },
+    {
+      "title": "HTTP Requests",
+      "url": "/d/url-shortener-http",
+      "type": "link",
+      "keepTime": true
+    },
+    {
+      "title": "Product Metrics",
+      "url": "/d/url-shortener-product",
+      "type": "link",
+      "keepTime": true
+    },
+    {
+      "title": "Go Runtime & Process",
+      "url": "/d/url-shortener-runtime",
+      "type": "link",
+      "keepTime": true
+    }
+  ]
+}

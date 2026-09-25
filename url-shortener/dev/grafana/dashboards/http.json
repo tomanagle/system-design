@@ -446,6 +446,12 @@
       "type": "link",
       "keepTime": true,
       "includeVars": true
+    },
+    {
+      "title": "Event Pipeline",
+      "url": "/d/url-shortener-pipeline",
+      "type": "link",
+      "keepTime": true
     }
   ]
 }

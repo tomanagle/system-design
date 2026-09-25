@@ -1,6 +1,106 @@
 name: url-shortener
 
+x-app-environment: &app-environment
+  LOG_LEVEL: info
+  DATABASE_URL: postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable
+  KAFKA_BROKERS: kafka:9092
+  KAFKA_TOPIC: ${KAFKA_TOPIC:-redirect-events-v1}
+  KAFKA_PARTITIONS: ${KAFKA_PARTITIONS:-4}
+  KAFKA_CONSUMER_GROUP: redirect-analytics-v1
+  ANALYTICS_QUEUE_SIZE: ${ANALYTICS_QUEUE_SIZE:-10000}
+  ANALYTICS_HASH_KEY: ${ANALYTICS_HASH_KEY:-local-development-key-change-before-deploying}
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_DB: analytics
+  CLICKHOUSE_USER: analytics
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-analytics}
+
 services:
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.9.0
+    restart: unless-stopped
+    command:
+      - --kafka.server=kafka:9092
+      - --kafka.version=3.6.0
+      - --refresh.metadata=10s
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  kafka:
+    image: apache/kafka:4.2.1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${KAFKA_PORT:-19092}:19092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-19092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CLICKHOUSE_PORT:-18123}:8123"
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: analytics
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-analytics}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user analytics --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1 FROM analytics.redirect_events LIMIT 0'"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile
+      target: runtime
+    command: ["worker"]
+    init: true
+    restart: unless-stopped
+    deploy:
+      replicas: ${WORKER_REPLICAS:-4}
+    environment: *app-environment
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 15s
+
   app:
     build:
       context: ..
@@ -8,9 +108,7 @@ services:
       target: runtime
     init: true
     restart: unless-stopped
-    environment:
-      LOG_LEVEL: info
-      DATABASE_URL: postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable
+    environment: *app-environment
     expose:
       - "8080"
     deploy:
@@ -32,7 +130,7 @@ services:
       timeout: 3s
       retries: 12
       start_period: 30s
-    stop_grace_period: 10s
+    stop_grace_period: 15s
 
   traefik:
     image: traefik:v3.6
@@ -106,3 +204,5 @@ volumes:
   postgres_data:
   prometheus_data:
   grafana_data:
+  kafka_data:
+  clickhouse_data:

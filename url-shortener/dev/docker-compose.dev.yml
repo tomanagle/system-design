@@ -1,4 +1,15 @@
 services:
+  worker:
+    build:
+      target: development
+    command: ["go", "tool", "air", "-c", ".air.worker.toml"]
+    volumes:
+      - ..:/app
+      - /app/tmp
+    environment:
+      LOG_LEVEL: debug
+    stop_grace_period: 15s
+
   app:
     build:
       target: development

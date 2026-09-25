@@ -6,12 +6,14 @@
 - GET a short URL to redirect to its original long URL
 - Short codes must be exactly 7 characters long
 - Short codes should not be easily guessable
+- A successful redirect must record an event
 
 ## Non-functional requirements
 
 - 100m new URLs created a day
 - 1b redirects a day
 - The service will run for 10 years
+- redirects must favor availability over consistency
 
 ## Napkin maths
 
@@ -151,3 +153,79 @@ It keeps codes at the required 7 characters and avoids exposing sequential IDs.
 We accept the extra storage and collision retries, with the database enforcing
 uniqueness. The 3.52 trillion possible codes accommodate the projected 365b URLs,
 but collisions still need handling well before the space fills.
+
+### Redirect analytics
+
+The redirect handler queues an event in memory, and the Kafka producer sends it
+in the background. Workers in one consumer group read the topic and batch events
+into ClickHouse. Postgres continues to store URL mappings.
+
+```mermaid
+flowchart LR
+    Client --> App
+    App -->|lookup| Postgres
+    App -->|302 redirect| Client
+    App -->|nonblocking enqueue| Queue[In-memory queue]
+    Queue --> Producer
+    Producer -->|key = short code| Kafka[Kafka: 4 partitions]
+    Kafka --> Workers[Worker consumer group]
+    Workers --> ClickHouse
+```
+
+#### Async capture vs transactional outbox
+
+| Approach | Redirect path | Failure tradeoff |
+| --- | --- | --- |
+| Async capture (chosen) | Enqueue without waiting for Kafka or ClickHouse | Redirects continue during analytics outages, but events can be lost |
+| Transactional outbox | Commit an outbox row in Postgres before returning the redirect; a relay publishes it later | Survives app crashes after commit and Kafka outages, but redirects depend on a successful database write |
+
+An [outbox](https://microservices.io/patterns/data/transactional-outbox.html)
+atomically records an event alongside a business database change. Our redirect
+normally only reads a URL, so it would introduce a write on every redirect.
+The relay can retry, but consumers still need deduplication. Neither approach
+can atomically commit an event and prove the client received the HTTP response.
+
+I chose redirect availability and latency over guaranteed event capture.
+The bounded queue holds up to 10,000 events per app by default. Failed Kafka
+batches retry in the background; when the queue fills, new events are dropped.
+A process crash can lose queued events. Graceful shutdown gives the producer
+five seconds to drain.
+
+#### Partitioning and workers
+
+The short code is the Kafka message key. The producer uses `kafka.Hash`: FNV-1a
+with the library's signed-hash/modulo partition selection. With a fixed partition
+count, every producer sends the same short code to the same partition.
+
+Four partitions and four worker replicas are the defaults. Kafka assigns each
+partition to one consumer in the group. Fewer workers can own multiple partitions;
+extra workers beyond the partition count sit idle. Each worker processes its
+batches sequentially and commits offsets only after ClickHouse accepts them.
+
+Ordering means Kafka append order within a partition, not a global order or
+wall-clock order across app instances. Retries can duplicate records. Stored
+partition/offset fields allow events to be read in Kafka order. Changing the
+partition count changes key placement, so startup rejects a mismatch on an
+existing topic. Use a planned topic migration rather than resizing a live stream
+when per-code ordering matters.
+
+#### Event identity and storage
+
+Events contain a unique event ID, schema version, short code, UTC timestamp, and
+`user_id`. The user ID is an HMAC-SHA256 hash of `User-Agent` and `Accept-Language`
+using a key shared by app replicas. Raw headers and IP addresses are not stored.
+Identical browser signatures share an ID, and browser changes can change it.
+This measures approximate browser signatures.
+
+ClickHouse is the chosen analytics store because this is an append-heavy event
+workload with aggregate queries at a projected 1b events/day. Postgres keeps the
+transactional URL lookups separate from analytics ingestion and scans. Postgres
+would be a simpler starting point for a much smaller event workload.
+
+Delivery after Kafka is **at least once**. Workers retry storage failures without
+committing offsets. If a worker crashes after inserting but before committing,
+the event is replayed with the same ID. The ClickHouse table uses
+[ReplacingMergeTree](https://clickhouse.com/docs/engines/table-engines/mergetree-family/replacingmergetree)
+with the event ID in its sorting key. Background merges remove duplicates;
+queries needing deduplicated results use `FINAL` (or count distinct event IDs).
+This is not an exactly-once delivery guarantee.

@@ -20,7 +20,7 @@ func NewGenerator(first string, rest ...string) *Generator {
 	return &Generator{codes: append([]string{first}, rest...)}
 }
 
-// Generate can be passed directly to dbstore.NewShortUrlStore.
+// Generate can be passed directly to pgstore.NewShortUrlStore.
 func (g *Generator) Generate() string {
 	g.mu.Lock()
 	defer g.mu.Unlock()

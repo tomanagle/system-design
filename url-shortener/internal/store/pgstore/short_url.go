@@ -1,4 +1,4 @@
-package dbstore
+package pgstore
 
 import (
 	"context"
@@ -15,12 +15,14 @@ type ShortUrlStore struct {
 	db            *sql.DB
 	codeGenerator func() string
 	logger        *slog.Logger
+	metrics       metrics.Store
 }
 
 type ShortUrlStoreParams struct {
 	DB            *sql.DB
 	CodeGenerator func() string
 	Logger        *slog.Logger
+	Metrics       metrics.Store
 }
 
 // NewShortUrlStore requires all dependencies to be supplied by the caller.
@@ -29,6 +31,7 @@ func NewShortUrlStore(params ShortUrlStoreParams) *ShortUrlStore {
 		db:            params.DB,
 		codeGenerator: params.CodeGenerator,
 		logger:        params.Logger,
+		metrics:       params.Metrics,
 	}
 }
 
@@ -39,7 +42,7 @@ func (s *ShortUrlStore) CreateShortURL(ctx context.Context, url string) (*store.
 	code := s.codeGenerator()
 	defer func() {
 		s.logger.DebugContext(ctx, "CreateShortURL", "duration", time.Since(start), "code", code, "success", err == nil)
-		metrics.ObserveDBRequest("create_short_url", start, err)
+		s.metrics.ObserveDBRequest("create_short_url", start, err)
 	}()
 
 	newShortURL := &store.ShortURL{
@@ -59,7 +62,7 @@ func (s *ShortUrlStore) CreateShortURL(ctx context.Context, url string) (*store.
 		return nil, err
 	}
 
-	metrics.ShortURLsCreated.Inc()
+	s.metrics.Created.Inc()
 
 	return newShortURL, nil
 }
@@ -69,7 +72,7 @@ func (s *ShortUrlStore) GetShortURL(ctx context.Context, code string) (*store.Sh
 	start := time.Now()
 	defer func() {
 		s.logger.DebugContext(ctx, "GetShortURL", "duration", time.Since(start), "code", code, "success", err == nil)
-		metrics.ObserveDBRequest("get_short_url", start, err)
+		s.metrics.ObserveDBRequest("get_short_url", start, err)
 	}()
 
 	row := s.db.QueryRowContext(ctx, "SELECT id, code, url FROM short_url WHERE code = $1", code)

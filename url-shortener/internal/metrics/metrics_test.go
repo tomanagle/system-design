@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestHTTPMiddleware(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	duration := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "test_http_duration_seconds"}, []string{"route", "method", "code"})
-	registry.MustRegister(duration)
+	m := MustNew(registry)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{code}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Location", "https://example.com")
@@ -23,7 +23,7 @@ func TestHTTPMiddleware(t *testing.T) {
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.Handle("GET /metrics", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	handler := instrumentHTTP(duration, mux)
+	handler := m.HTTPMiddleware(mux)
 	for _, tc := range []struct {
 		method, path string
 		status       int
@@ -49,16 +49,21 @@ func TestHTTPMiddleware(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]uint64{"GET /{code}|get|302": 2, "GET /healthz|get|200": 1, "GET /metrics|get|200": 1, "unmatched|get|404": 1, "unmatched|post|405": 1}
-	for _, metric := range families[0].Metric {
-		labels := map[string]string{}
-		for _, label := range metric.Label {
-			labels[label.GetName()] = label.GetValue()
+	for _, family := range families {
+		if family.GetName() != "http_request_duration_seconds" {
+			continue
 		}
-		key := labels["route"] + "|" + labels["method"] + "|" + labels["code"]
-		if count, ok := want[key]; !ok || metric.Histogram.GetSampleCount() != count {
-			t.Errorf("unexpected histogram %s: count %d", key, metric.Histogram.GetSampleCount())
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			key := labels["route"] + "|" + labels["method"] + "|" + labels["code"]
+			if count, ok := want[key]; !ok || metric.Histogram.GetSampleCount() != count {
+				t.Errorf("unexpected histogram %s: count %d", key, metric.Histogram.GetSampleCount())
+			}
+			delete(want, key)
 		}
-		delete(want, key)
 	}
 	if len(want) != 0 {
 		t.Errorf("missing series: %v", want)
@@ -66,8 +71,6 @@ func TestHTTPMiddleware(t *testing.T) {
 }
 
 func TestObserveDBRequest(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	registry.MustRegister(dbDuration)
 	for _, tc := range []struct {
 		name    string
 		err     error
@@ -79,17 +82,25 @@ func TestObserveDBRequest(t *testing.T) {
 		{"failure", errors.New("database unavailable"), "error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			registry := prometheus.NewRegistry()
+			m := MustNew(registry)
 			operation := "test_" + tc.name
-			defer dbDuration.DeleteLabelValues(operation, tc.outcome)
-			ObserveDBRequest(operation, time.Now().Add(-time.Millisecond), tc.err)
+			m.Store.ObserveDBRequest(operation, time.Now().Add(-time.Millisecond), tc.err)
 			families, err := registry.Gather()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(families) != 1 || len(families[0].Metric) != 1 {
+			var observations []*dto.Metric
+			for _, family := range families {
+				if family.GetName() == "db_request_duration_seconds" {
+					observations = family.Metric
+				}
+			}
+			if len(observations) != 1 {
 				t.Fatalf("unexpected metrics: %v", families)
 			}
-			metric := families[0].Metric[0]
+			metric := observations[0]
 			labels := map[string]string{}
 			for _, label := range metric.Label {
 				labels[label.GetName()] = label.GetValue()
