@@ -1,0 +1,108 @@
+name: url-shortener
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: dev/Dockerfile
+      target: runtime
+    init: true
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: info
+      DATABASE_URL: postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable
+    expose:
+      - "8080"
+    deploy:
+      replicas: ${APP_REPLICAS:-3}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.url-shortener.rule=PathPrefix(`/`)
+      - traefik.http.routers.url-shortener.entrypoints=web
+      - traefik.http.services.url-shortener.loadbalancer.server.port=8080
+      - traefik.http.services.url-shortener.loadbalancer.healthcheck.path=/healthz
+      - traefik.http.services.url-shortener.loadbalancer.healthcheck.interval=5s
+      - traefik.http.services.url-shortener.loadbalancer.healthcheck.timeout=2s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 10s
+
+  traefik:
+    image: traefik:v3.6
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.constraints=Label(`com.docker.compose.project`, `url-shortener`)
+      - --entrypoints.web.address=:80
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --ping=true
+      - --accesslog=true
+    ports:
+      - "127.0.0.1:${APP_PORT:-18080}:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      app:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shortener
+      POSTGRES_PASSWORD: shortener
+      POSTGRES_DB: shortener
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55439}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shortener -d shortener"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-19090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-13000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:

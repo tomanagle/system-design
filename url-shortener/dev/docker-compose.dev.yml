@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      target: development
+    command: ["go", "tool", "air", "-c", ".air.toml"]
+    volumes:
+      - ..:/app
+      # Each replica needs its own output directory; never share Air binaries.
+      - /app/tmp
+    stop_grace_period: 15s
+    environment:
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable
